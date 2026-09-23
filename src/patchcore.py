@@ -1,5 +1,9 @@
 ﻿"""Simplified PatchCore: patch features from a frozen backbone, a coreset memory bank of
 normal patches, and nearest-neighbour distance as the anomaly score.
+
+Backbones:
+  wrn50    - WideResNet-50 (torchvision ImageNet weights), layer2 + layer3, 28x28 patch grid at 224 px
+  dinov2_s - DINOv2 ViT-S/14, two intermediate blocks, 16x16 patch grid at 224 px
 """
 import math
 
@@ -10,8 +14,6 @@ from torchvision.transforms.functional import gaussian_blur
 
 
 class CNNFeatureExtractor(torch.nn.Module):
-    """WideResNet-50 layer2 + layer3 features with 3x3 local neighbourhood averaging."""
-
     name = "wrn50"
 
     def __init__(self, model_name="wide_resnet50_2.tv_in1k"):
@@ -27,7 +29,35 @@ class CNNFeatureExtractor(torch.nn.Module):
         f2 = F.avg_pool2d(f2, kernel_size=3, stride=1, padding=1)
         f3 = F.avg_pool2d(f3, kernel_size=3, stride=1, padding=1)
         f3 = F.interpolate(f3, size=f2.shape[-2:], mode="bilinear", align_corners=False)
-        return torch.cat([f2, f3], dim=1)  # (B, C, H, W)
+        return torch.cat([f2, f3], dim=1)
+
+
+class DINOv2FeatureExtractor(torch.nn.Module):
+    name = "dinov2_s"
+
+    def __init__(self, model_name="vit_small_patch14_dinov2.lvd142m", layers=(8, 11), img_size=224):
+        super().__init__()
+        self.layers = list(layers)
+        self.backbone = timm.create_model(model_name, pretrained=True, img_size=img_size, num_classes=0)
+        self.backbone.eval()
+        for p in self.backbone.parameters():
+            p.requires_grad_(False)
+
+    @torch.no_grad()
+    def forward(self, x):
+        feats = self.backbone.forward_intermediates(
+            x, indices=self.layers, output_fmt="NCHW", intermediates_only=True
+        )
+        feats = [F.avg_pool2d(f, kernel_size=3, stride=1, padding=1) for f in feats]
+        return torch.cat(feats, dim=1)
+
+
+def build_extractor(name):
+    if name == "wrn50":
+        return CNNFeatureExtractor()
+    if name == "dinov2_s":
+        return DINOv2FeatureExtractor()
+    raise ValueError(f"Unknown backbone: {name}")
 
 
 class PatchCore:
