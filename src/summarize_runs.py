@@ -44,7 +44,7 @@ def main():
     print("Main results (all fit images, mean and std over seeds):")
     print(full.round(3).to_string(index=False))
 
-    cats = sorted(agg.category.unique())
+    cats = sorted(c for c in agg.category.unique() if agg[agg.category == c].n_fit_images.nunique() > 1)
     fig, axes = plt.subplots(1, len(cats), figsize=(5 * len(cats), 4), squeeze=False)
     for ax, cat in zip(axes[0], cats):
         for bb, sub in agg[agg.category == cat].groupby("backbone"):
@@ -65,3 +65,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

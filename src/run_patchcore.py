@@ -5,9 +5,12 @@ The normal training images are split into:
   fit   - used to build the memory bank
   calib - never seen during fitting; their scores set the conformal thresholds
 
+Runs at a non-default --image-size are labelled "<category>_s<size>" so summaries keep
+them separate from 224 px runs.
+
 Usage (from the project root):
   python -m src.run_patchcore --category screw --backbone wrn50
-  python -m src.run_patchcore --category screw --backbone dinov2_s --seed 1
+  python -m src.run_patchcore --category screw --backbone dinov2_s --image-size 448
   python -m src.run_patchcore --category screw --max-train 25
 """
 import argparse
@@ -63,6 +66,7 @@ def main():
     p.add_argument("--data-root", default="data/mvtec")
     p.add_argument("--category", required=True)
     p.add_argument("--backbone", choices=["wrn50", "dinov2_s"], default="wrn50")
+    p.add_argument("--image-size", type=int, default=224, help="crop size in pixels; DINOv2 needs a multiple of 14")
     p.add_argument("--coreset-ratio", type=float, default=0.1)
     p.add_argument("--calib-frac", type=float, default=0.2, help="share of normal train images held out for calibration")
     p.add_argument("--max-train", type=int, default=None, help="cap on normal images used for fitting")
@@ -71,10 +75,14 @@ def main():
     p.add_argument("--out-dir", default="results")
     a = p.parse_args()
 
+    if a.backbone == "dinov2_s" and a.image_size % 14 != 0:
+        raise SystemExit("DINOv2 needs --image-size to be a multiple of 14 (e.g. 224, 336, 448).")
+
     torch.manual_seed(a.seed)
     device = "cuda" if torch.cuda.is_available() else "cpu"
+    resize = int(round(a.image_size * 256 / 224))
 
-    full_train = MVTecDataset(a.data_root, a.category, "train")
+    full_train = MVTecDataset(a.data_root, a.category, "train", resize=resize, crop=a.image_size)
     rng = np.random.default_rng(a.seed)
     perm = rng.permutation(len(full_train))
     n_cal = max(1, int(round(len(full_train) * a.calib_frac)))
@@ -85,13 +93,13 @@ def main():
 
     fit_ds = Subset(full_train, fit_idx)
     cal_ds = Subset(full_train, cal_idx)
-    test_ds = MVTecDataset(a.data_root, a.category, "test")
+    test_ds = MVTecDataset(a.data_root, a.category, "test", resize=resize, crop=a.image_size)
 
     fit_loader = DataLoader(fit_ds, batch_size=a.batch_size, shuffle=False, num_workers=0)
     cal_loader = DataLoader(cal_ds, batch_size=a.batch_size, shuffle=False, num_workers=0)
     test_loader = DataLoader(test_ds, batch_size=a.batch_size, shuffle=False, num_workers=0)
 
-    extractor = build_extractor(a.backbone)
+    extractor = build_extractor(a.backbone, img_size=a.image_size)
     model = PatchCore(extractor, device, coreset_ratio=a.coreset_ratio, seed=a.seed)
 
     if device == "cuda":
@@ -111,10 +119,16 @@ def main():
     pixel_auroc = float(roc_auc_score(pixel_masks, test["maps"].ravel()))
     peak_mem_mb = torch.cuda.max_memory_allocated() / 1024**2 if device == "cuda" else None
 
+    label = a.category if a.image_size == 224 else f"{a.category}_s{a.image_size}"
+    if a.coreset_ratio != 0.1:
+        label += f"_c{int(round(a.coreset_ratio * 100))}"
+
     result = {
         "method": "patchcore",
         "backbone": extractor.name,
-        "category": a.category,
+        "category": label,
+        "base_category": a.category,
+        "image_size": a.image_size,
         "n_fit_images": len(fit_ds),
         "n_calib_images": len(cal_ds),
         "n_test_images": len(test_ds),
@@ -132,7 +146,7 @@ def main():
 
     out_dir = Path(a.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    tag = f"patchcore_{extractor.name}_{a.category}_fit{len(fit_ds)}_seed{a.seed}"
+    tag = f"patchcore_{extractor.name}_{label}_fit{len(fit_ds)}_seed{a.seed}"
     (out_dir / f"{tag}.json").write_text(json.dumps(result, indent=2))
     np.savez_compressed(
         out_dir / f"{tag}_scores.npz",

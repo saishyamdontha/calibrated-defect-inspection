@@ -52,11 +52,11 @@ class DINOv2FeatureExtractor(torch.nn.Module):
         return torch.cat(feats, dim=1)
 
 
-def build_extractor(name):
+def build_extractor(name, img_size=224):
     if name == "wrn50":
         return CNNFeatureExtractor()
     if name == "dinov2_s":
-        return DINOv2FeatureExtractor()
+        return DINOv2FeatureExtractor(img_size=img_size)
     raise ValueError(f"Unknown backbone: {name}")
 
 
@@ -124,3 +124,4 @@ class PatchCore:
         amap = gaussian_blur(amap, kernel_size=33, sigma=4.0).squeeze(1)
         image_scores = patch_scores.reshape(b, -1).max(dim=1).values
         return image_scores.cpu(), amap.cpu()
+
