@@ -14,7 +14,7 @@ class CNNFeatureExtractor(torch.nn.Module):
 
     name = "wrn50"
 
-    def __init__(self, model_name="wide_resnet50_2"):
+    def __init__(self, model_name="wide_resnet50_2.tv_in1k"):
         super().__init__()
         self.backbone = timm.create_model(model_name, pretrained=True, features_only=True, out_indices=(2, 3))
         self.backbone.eval()
