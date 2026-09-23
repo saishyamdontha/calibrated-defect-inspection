@@ -5,3 +5,8 @@ __pycache__/
 results/*.png
 .ipynb_checkpoints/
 .~lock*
+models/
+results/*.npz
+results/patchcore_*.json
+results/demo/
+results/figures/
